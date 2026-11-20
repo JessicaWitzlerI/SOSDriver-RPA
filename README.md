@@ -1,10 +1,9 @@
 # SOS Driver — Automação de triagem de prestadores
 
-Projeto acadêmico CitizenTech desenvolvido por:
+Projeto acadêmico CitizenTech (Global Solution 2026.2, FIAP) desenvolvido por:
 
-- **Jessica Witzler Costacurta** — RM99068
-- **Marcio Hitoshi Tahyra** — RM552511
-
+- Jessica Witzler Costacurta — RM99068
+- Marcio Hitoshi Tahyra — RM552511
 
 ## 1. Sobre o projeto
 
@@ -16,7 +15,7 @@ A classificação `revisao_manual` indica que há pendências no cadastro; o wor
 
 ## 2. Arquitetura
 
-```text
+```
 Arquivo CSV
     |
     v
@@ -47,22 +46,27 @@ JavaScript (validações e classificação por cadastro)
 - **SQLite:** persistência dos prestadores.
 - **Docker:** execução do n8n em contêiner.
 
+O fluxograma do processo em BPMN está em `docs/sosdriver_triagem.bpmn` (imagem em `docs/sosdriver_triagem.png`).
+
 ## 3. Estrutura do repositório
 
-```text
-SOSDriver-n8n/   
+```
+SOSDriver-n8n/
 ├── backend/
-│   ├── __pycache__
 │   ├── main.py
 │   ├── prestadores_api.py
-│   └── sosdriver.db
+│   └── requirements.txt
+├── data/
+│   └── cadastros_prestadores.csv           
 ├── logs/
 │   └── log_triagem_20261119191732.txt
-└── data/
-│   └── cadastros_prestadores.csv
 ├── n8n/
-    └── sosdriver_triagem_prestadores.json
+│   └── sosdriver_triagem_prestadores.json
+├── .gitignore
+└── README.md
 ```
+
+O banco `sosdriver.db` e a pasta `__pycache__/` são gerados na execução e ficam fora do repositório (`.gitignore`).
 
 ## 4. Tecnologias utilizadas
 
@@ -71,7 +75,7 @@ SOSDriver-n8n/
 | n8n | Orquestração do workflow |
 | JavaScript | Regras de validação e classificação |
 | Python | Implementação da API |
-| FastAPI | Endpoints HTTP do MVP |
+| FastAPI / Pydantic | Endpoints HTTP e validação do payload do MVP |
 | SQLite | Persistência dos prestadores |
 | Docker | Execução do n8n em contêiner |
 
@@ -85,80 +89,135 @@ O workflow verifica:
 - Validade da habilitação.
 - Formato sintático do e-mail.
 - Quantidade de dígitos do telefone.
-- Tipo de serviço permitido: guincho, mecânico, socorrista ou chaveiro.
+- Tipo de serviço permitido: `guincho`, `mecanico`, `socorrista` ou `chaveiro`.
 - Cidade dentro da cobertura configurada: São Paulo, Guarulhos, Osasco, Santo André, São Bernardo do Campo e São Caetano do Sul.
+
+| Situação encontrada | Classificação |
+|---|---|
+| CPF/CNPJ inválido | `reprovado` |
+| Documento duplicado no lote | `reprovado` |
+| Habilitação/licença vencida | `reprovado` |
+| Data de validade ausente ou ilegível | `revisao_manual` |
+| E-mail ou telefone inválido | `revisao_manual` |
+| Tipo de serviço desconhecido | `revisao_manual` |
+| Cidade fora da cobertura | `revisao_manual` |
+| Nenhuma inconsistência | `aprovado` |
 
 A prioridade de classificação é: havendo motivo de reprovação, o cadastro é reprovado; sem reprovação, mas com pendência, recebe `revisao_manual`; sem inconsistências, é aprovado.
 
-## 6. Como executar
+## 6. Lógica de negócio e processamento em lote
 
-### 6.1 Backend
+- **Estrutura de repetição:** o nó de código "Validar cadastros" percorre, com um laço `for`, todos os cadastros do lote e aplica as regras a cada um.
+- **Estruturas de decisão:** a classificação em três status (condicionais no mesmo nó) e o nó "Aprovado?", que desvia apenas os aprovados para o envio ao MVP.
+- Os resultados de todos os caminhos são reunidos no nó "Juntar resultados" e consolidados em um único log.
 
-Pré-requisitos: Python 3.10 ou superior e dependências:
+## 7. Exceções e resiliência
 
-```bash
-pip install fastapi uvicorn pydantic
+| Falha prevista | Tratamento |
+|---|---|
+| Arquivo CSV ausente | O nó de leitura sempre emite um item; o nó "Arquivo encontrado?" desvia o fluxo para o registro "LOTE NAO PROCESSADO" no log. |
+| Arquivo vazio ou sem colunas obrigatórias | O lote recebe o status `lote_invalido` e o motivo é registrado no log. |
+| Registro duplicado ou inconsistente | Tratado por linha (reprovado ou revisão manual), sem interromper o lote. |
+| API do MVP fora do ar ou rejeitando o envio | Até 3 tentativas com intervalo de 2 s; se falhar, o prestador é registrado como `FALHA_INTEGRACAO` no log e o fluxo continua com os demais. |
+| Reenvio do mesmo prestador | O backend faz inserção/atualização por `id_externo` (idempotente), então reprocessar um lote não duplica registros. |
+
+Nenhuma falha é silenciosa: todas terminam em uma linha de log.
+
+## 8. Como executar
+
+### 8.1 Backend
+
+Pré-requisitos: Python 3.10 ou superior.
+
+```
+cd backend
+python -m pip install -r requirements.txt
 ```
 
-Configure a variável de ambiente `SOSDRIVER_API_KEY` com uma chave definida para o ambiente. Opcionalmente, configure `SOSDRIVER_DB` para indicar o caminho do banco SQLite.
+Configure a chave da API e, opcionalmente, o caminho do banco. No Windows PowerShell:
 
-No Windows PowerShell:
-
-```powershell
+```
 $env:SOSDRIVER_API_KEY="sua-chave-local"
 $env:SOSDRIVER_DB="sosdriver.db"
-uvicorn app:app --reload
+python -m uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-O arquivo `src/prestadores_api.py` define um `APIRouter`. Ele deve ser incluído na aplicação FastAPI principal:
+Sem `SOSDRIVER_API_KEY`, a API usa uma chave padrão de desenvolvimento (`troque-esta-chave`), que não deve ser usada fora de testes locais.
+
+`backend/prestadores_api.py` define um `APIRouter`, incluído em `backend/main.py`:
 
 ```python
 from prestadores_api import router
 app.include_router(router)
 ```
 
-A documentação interativa da API fica disponível em `/docs`, conforme a configuração do servidor.
+O parâmetro `--host 0.0.0.0` é necessário para que o n8n, rodando em contêiner, alcance a API. A documentação interativa fica em `http://localhost:8000/docs`.
 
-### 6.2 n8n
+### 8.2 n8n
 
-1. Inicie o contêiner n8n.
-2. Importe `n8n/sosdriver_triagem_prestadores.json`.
-3. Disponibilize o CSV no caminho configurado no nó **Ler lote de cadastros**: `/home/node/.n8n-files/cadastros_prestadores.csv`.
-4. No nó **Enviar ao MVP**, configure a URL da API acessível a partir do contêiner. Em Docker Desktop, `host.docker.internal` pode ser necessário para acessar o host.
-5. Configure o cabeçalho `x-api-key` usando uma credencial segura do n8n. O texto `CONFIGURAR_CREDENCIAL_NO_N8N` no JSON é apenas um marcador e não é uma chave válida.
-6. Execute o workflow manualmente e confira a resposta da API e o arquivo de log.
+1. Inicie o contêiner (o volume mantém workflows e configurações do n8n):
+   ```
+   docker run -d --name SOSDriver -p 5678:5678 -v n8n_data:/home/node/.n8n n8nio/n8n
+   ```
+2. Acesse `http://localhost:5678` e importe `n8n/sosdriver_triagem_prestadores.json`.
+3. Copie o CSV para o diretório de arquivos do n8n, no caminho configurado no nó **Ler lote de cadastros**:
+   ```
+   docker cp data\cadastros_prestadores.csv SOSDriver:/home/node/.n8n-files/cadastros_prestadores.csv
+   ```
+4. No nó **Enviar ao MVP**, configure a URL da API acessível a partir do contêiner. No Docker Desktop, use `http://host.docker.internal:8000/prestadores`.
+5. Configure o cabeçalho `x-api-key` usando uma credencial segura do n8n, com o mesmo valor de `SOSDRIVER_API_KEY`. O texto `CONFIGURAR_CREDENCIAL_NO_N8N` no JSON é apenas um marcador e não é uma chave válida.
+6. Execute o workflow manualmente (**Execute workflow**) e confira a resposta da API e o arquivo de log.
 
 O workflow usa gatilho manual. Portanto, uma pessoa precisa iniciar cada execução.
 
-## 7. Integração com o MVP
+## 9. Integração com o MVP
 
 - `POST /prestadores`: recebe os cadastros aprovados, autentica pelo cabeçalho `x-api-key` e realiza inserção/atualização no SQLite.
-- `GET /prestadores`: lista prestadores ativos e permite filtros por cidade e tipo de serviço.
+- `GET /prestadores`: lista prestadores ativos e permite filtros por `cidade` e `tipo_servico`. Não expõe telefone.
 
-A integração foi exercitada no ambiente de desenvolvimento: três cadastros aprovados foram enviados e confirmados no SQLite. Consulte a documentação técnica e as evidências visuais em `docs/` e `assets/`.
+A integração foi exercitada no ambiente de desenvolvimento: três cadastros aprovados (P001, P002 e P003) foram enviados e confirmados pela API e pelo SQLite. As evidências visuais estão em `docs/evidencias/`.
 
-## 8. Testes
+## 10. Testes
 
-O lote demonstrativo processado tinha oito registros: três aprovados e enviados, três reprovados e dois classificados como `revisao_manual`.
+O lote demonstrativo (`data/cadastros_prestadores.csv`) tem oito registros: três aprovados e enviados, três reprovados e dois classificados como `revisao_manual`.
 
-Os cenários efetivamente executados e os cenários ainda pendentes estão discriminados em [`tests/README.md`](tests/README.md). Não considere cenários marcados como pendentes como testes concluídos.
+| Cenário | Como reproduzir | Resultado esperado | Situação |
+|---|---|---|---|
+| Sucesso | Lote de exemplo com a API no ar | P001, P002 e P003 enviados e listados em `GET /prestadores` | Executado |
+| Decisão | Mesmo lote | P004 duplicado, P005 documento inválido e P006 vencida (reprovados); P007 e P008 em revisão manual | Executado |
+| Integração com o MVP | `GET /prestadores` após o lote | Três prestadores persistidos no SQLite | Executado |
+| API fora do ar | Parar o uvicorn e executar | Aprovados registrados como `FALHA_INTEGRACAO`; o fluxo não quebra | Pendente (atualizar após executar) |
+| Arquivo ausente | Renomear o CSV e executar | Log "LOTE NAO PROCESSADO" | Pendente (atualizar após executar) |
+| Arquivo sem coluna obrigatória | Remover a coluna `email` | Log `lote_invalido` | Pendente (atualizar após executar) |
+| Reprocessamento | Executar o lote duas vezes | Sem duplicação em `GET /prestadores` | Pendente (atualizar após executar) |
 
-## 9. Logs e auditoria
+Cenários marcados como pendentes não devem ser considerados testes concluídos.
 
-O workflow gera log TXT com horário, contagens, identificador externo, documento mascarado, status e motivos. O ambiente utilizado gravava os arquivos dentro do contêiner n8n; como não havia volume Docker persistente, foi necessário copiar o log manualmente para a pasta local.
+## 11. Logs e auditoria
 
-A pasta `logs/` contém somente um exemplo sanitizado, não um log bruto com dados pessoais.
+O workflow gera um log TXT por execução (`log_triagem_AAAAMMDDHHMMSS.txt`). A primeira linha é um resumo (total, entregues ao MVP, revisão manual, reprovados, falhas de integração e lotes inválidos), seguida de uma linha por cadastro com horário, identificador externo, documento mascarado, status e motivos. O log não contém telefone, e-mail nem documento completo.
 
-## 10. Segurança e LGPD
+O ambiente utilizado gravava os arquivos dentro do contêiner n8n; como não havia volume Docker persistente para os logs, foi necessário copiá-los manualmente para a pasta local:
+
+```
+docker cp SOSDriver:/home/node/.n8n-files/log_triagem_20261119191732.txt .\logs\
+```
+
+A pasta `logs/` contém somente exemplos sanitizados, não logs brutos com dados pessoais.
+
+## 12. Segurança e LGPD
 
 - Use somente dados fictícios ou anonimizados no repositório público.
 - Não publique arquivos `.env`, chaves, banco SQLite com dados pessoais, CSVs reais ou logs brutos.
-- Configure a chave da API por variável de ambiente no backend e credencial no n8n.
-- Restrinja o acesso ao CSV, API, banco e logs.
+- Configure a chave da API por variável de ambiente no backend e por credencial no n8n; confira que o JSON exportado do workflow não contém chave real.
+- Minimização de dados: o log usa documento mascarado e não registra contatos; a listagem da API não expõe telefone.
+- Restrinja o acesso ao CSV, à API, ao banco e aos logs.
 - Defina finalidade, base legal, retenção e controle de acesso conforme as diretrizes do projeto e a LGPD.
 
-O protótipo não deve ser considerado pronto para produção sem as melhorias e testes pendentes descritos na documentação técnica.
+O protótipo não deve ser considerado pronto para produção sem as melhorias e testes pendentes descritos neste documento.
 
-## 11. Links da entrega
+## 13. Documentação e entregáveis
 
-- **Vídeo demonstrativo:** https://youtu.be/8FvgLmfFE6k
+- Documentação em PDF (PDD, BPMN, testes e evidências): (inserir link ou caminho)
+- Vídeo de apresentação da solução: (inserir link)
+- Repositório: (inserir link do GitHub)
