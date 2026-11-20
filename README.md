@@ -218,6 +218,4 @@ O protótipo não deve ser considerado pronto para produção sem as melhorias e
 
 ## 13. Documentação e entregáveis
 
-- Documentação em PDF (PDD, BPMN, testes e evidências): (inserir link ou caminho)
-- Vídeo de apresentação da solução: (inserir link)
-- Repositório: (inserir link do GitHub)
+- Vídeo de apresentação da solução: https://youtu.be/8FvgLmfFE6k
