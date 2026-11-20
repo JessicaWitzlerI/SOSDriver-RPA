@@ -1,0 +1,286 @@
+{
+  "name": "SOS Driver - Triagem automatica de prestadores",
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "Iniciar triagem",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "fileSelector": "/home/node/.n8n-files/cadastros_prestadores.csv",
+        "options": {}
+      },
+      "name": "Ler lote de cadastros",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        220,
+        200
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "csv",
+        "options": {}
+      },
+      "name": "Extrair CSV",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        440,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Triagem de cadastros de prestadores - SOS Driver\nconst COBERTURA = ['são paulo','guarulhos','osasco','santo andré','são bernardo do campo','são caetano do sul'];\nconst OBRIGATORIOS = ['id','nome','documento','telefone','email','tipo_servico','cidade','validade_habilitacao'];\nconst TIPOS = ['guincho','mecanico','socorrista','chaveiro'];\nconst agora = new Date().toISOString();\nconst itens = $input.all().map(i => i.json);\n\nconst soDigitos = v => String(v ?? '').replace(/\\D/g, '');\nconst mascara = v => { const d = soDigitos(v); return d.length < 6 ? '***' : d.slice(0,3) + '.***.***-' + d.slice(-2); };\n\nfunction cpfOk(c) {\n  if (c.length !== 11 || /^(\\d)\\1+$/.test(c)) return false;\n  for (let t = 9; t < 11; t++) {\n    let s = 0;\n    for (let i = 0; i < t; i++) s += Number(c[i]) * (t + 1 - i);\n    if (((s * 10) % 11) % 10 !== Number(c[t])) return false;\n  }\n  return true;\n}\nfunction cnpjOk(c) {\n  if (c.length !== 14 || /^(\\d)\\1+$/.test(c)) return false;\n  const dv = n => { let p = n - 7, s = 0; for (let i = 0; i < n; i++) { s += Number(c[i]) * p--; if (p < 2) p = 9; } const r = s % 11; return r < 2 ? 0 : 11 - r; };\n  return dv(12) === Number(c[12]) && dv(13) === Number(c[13]);\n}\n\n// Estrutura do arquivo: sem linhas ou sem colunas obrigatórias = lote inválido (nunca falha em silêncio)\nif (itens.length === 0 || OBRIGATORIOS.some(col => !(col in itens[0]))) {\n  return [{ json: { id_externo: 'LOTE', documento_mascarado: '-', status: 'lote_invalido',\n    motivos: ['Arquivo vazio ou sem as colunas obrigatórias: ' + OBRIGATORIOS.join(', ')], processado_em: agora } }];\n}\n\nconst vistos = new Set();\nconst saida = [];\nfor (const r of itens) {                       // estrutura de repetição sobre o lote\n  const motivosReprova = [];\n  const motivosRevisao = [];\n  const doc = soDigitos(r.documento);\n  const id = String(r.id || '').trim() || 'SEM-ID';\n\n  if (!(cpfOk(doc) || cnpjOk(doc))) motivosReprova.push('Documento inválido');\n  if (doc && vistos.has(doc)) motivosReprova.push('Cadastro duplicado no lote');\n  if (doc) vistos.add(doc);\n\n  const validade = new Date(String(r.validade_habilitacao || '').trim());\n  if (isNaN(validade.getTime())) motivosRevisao.push('Data de validade ausente ou ilegível');\n  else if (validade < new Date()) motivosReprova.push('Habilitação/licença vencida');\n\n  if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(String(r.email || ''))) motivosRevisao.push('E-mail inválido');\n  const tel = soDigitos(r.telefone);\n  if (tel.length < 10 || tel.length > 11) motivosRevisao.push('Telefone inválido');\n  if (!TIPOS.includes(String(r.tipo_servico || '').toLowerCase().trim())) motivosRevisao.push('Tipo de serviço desconhecido');\n  if (!COBERTURA.includes(String(r.cidade || '').toLowerCase().trim())) motivosRevisao.push('Cidade fora da área de cobertura');\n\n  let status = 'aprovado';                      // estrutura de decisão\n  if (motivosReprova.length) status = 'reprovado';\n  else if (motivosRevisao.length) status = 'revisao_manual';\n\n  saida.push({ json: {\n    id_externo: id,\n    documento_mascarado: mascara(doc),\n    status,\n    motivos: [...motivosReprova, ...motivosRevisao],\n    processado_em: agora,\n    payload: { id_externo: id, nome: String(r.nome).trim(), tipo_servico: String(r.tipo_servico).toLowerCase().trim(),\n               cidade: String(r.cidade).trim(), telefone: tel, validade_habilitacao: String(r.validade_habilitacao).trim() }\n  } });\n}\nreturn saida;\n"
+      },
+      "name": "Validar cadastros",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "aprovado",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Aprovado?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        880,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:8000/prestadores",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "troque-esta-chave"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.payload) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "name": "Enviar ao MVP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {},
+      "name": "Juntar resultados",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1320,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Consolida o lote, confere a entrega ao MVP e monta o log de auditoria (sem dados sensíveis)\nconst agora = new Date().toISOString();\nconst base = $('Validar cadastros').all().map(i => i.json);\nlet respostas = [];\ntry { respostas = $('Enviar ao MVP').all().map(i => i.json); } catch (e) { respostas = []; }\nconst entregues = new Set(respostas.filter(r => r && r.id_externo).map(r => r.id_externo));\n\nconst c = { aprovado_entregue: 0, revisao_manual: 0, reprovado: 0, falha_integracao: 0, lote_invalido: 0 };\nconst linhas = [];\nfor (const r of base) {\n  let status = r.status;\n  const motivos = (r.motivos || []).slice();\n  if (status === 'aprovado') {\n    if (entregues.has(r.id_externo)) status = 'aprovado_entregue';\n    else { status = 'falha_integracao'; motivos.push('API do MVP indisponível ou rejeitou o registro'); }\n  }\n  c[status] = (c[status] || 0) + 1;\n  linhas.push(`${r.processado_em} | ${r.id_externo} | doc ${r.documento_mascarado} | ${status.toUpperCase()} | ${motivos.join('; ') || '-'}`);\n}\nconst nivel = (c.falha_integracao || c.lote_invalido) ? 'ERRO' : 'INFO';\nconst cab = `${agora} | ${nivel} | LOTE FINALIZADO | total=${base.length} entregues_ao_mvp=${c.aprovado_entregue} revisao_manual=${c.revisao_manual} reprovados=${c.reprovado} falhas_integracao=${c.falha_integracao} lote_invalido=${c.lote_invalido}`;\nconst texto = [cab, ...linhas].join('\\n') + '\\n';\nconst nome = 'log_triagem_' + agora.replace(/[-:T]/g, '').slice(0, 14) + '.txt';\nconst bin = await this.helpers.prepareBinaryData(Buffer.from(texto, 'utf8'), nome, 'text/plain');\nreturn [{ json: { nivel, resumo: cab, arquivo_log: nome }, binary: { data: bin } }];\n",
+        "mode": "runOnceForAllItems"
+      },
+      "name": "Consolidar e gerar log",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Arquivo do lote ausente ou ilegível: registra o erro em vez de falhar em silêncio\nconst agora = new Date().toISOString();\nconst msg = ($json.error && ($json.error.message || $json.error)) || 'arquivo ausente ou ilegível';\nconst texto = `${agora} | ERRO | LOTE NAO PROCESSADO | motivo=${String(msg).slice(0, 200)}\\n`;\nconst nome = 'log_triagem_' + agora.replace(/[-:T]/g, '').slice(0, 14) + '.txt';\nconst bin = await this.helpers.prepareBinaryData(Buffer.from(texto, 'utf8'), nome, 'text/plain');\nreturn [{ json: { nivel: 'ERRO', resumo: texto.trim(), arquivo_log: nome }, binary: { data: bin } }];\n"
+      },
+      "name": "Registrar erro de arquivo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "={{ '/home/node/.n8n-files/' + $json.arquivo_log }}",
+        "dataPropertyName": "data",
+        "options": {}
+      },
+      "name": "Salvar log",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        1760,
+        200
+      ]
+    }
+  ],
+  "connections": {
+    "Iniciar triagem": {
+      "main": [
+        [
+          {
+            "node": "Ler lote de cadastros",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler lote de cadastros": {
+      "main": [
+        [
+          {
+            "node": "Extrair CSV",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Registrar erro de arquivo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extrair CSV": {
+      "main": [
+        [
+          {
+            "node": "Validar cadastros",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar cadastros": {
+      "main": [
+        [
+          {
+            "node": "Aprovado?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aprovado?": {
+      "main": [
+        [
+          {
+            "node": "Enviar ao MVP",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Juntar resultados",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Enviar ao MVP": {
+      "main": [
+        [
+          {
+            "node": "Juntar resultados",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Juntar resultados": {
+      "main": [
+        [
+          {
+            "node": "Consolidar e gerar log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consolidar e gerar log": {
+      "main": [
+        [
+          {
+            "node": "Salvar log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Registrar erro de arquivo": {
+      "main": [
+        [
+          {
+            "node": "Salvar log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

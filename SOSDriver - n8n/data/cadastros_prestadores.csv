@@ -1,0 +1,9 @@
+id,nome,documento,telefone,email,tipo_servico,cidade,validade_habilitacao
+P001,Guincho Rápido Ltda,11.222.333/0001-81,11988887777,contato@guinchorapido.com,guincho,São Paulo,2027-06-30
+P002,Carlos Mendes,529.982.247-25,11977776666,carlos.mendes@email.com,mecanico,Guarulhos,2027-01-15
+P003,Ana Souza,111.444.777-35,11966665555,ana.souza@email.com,socorrista,Osasco,2026-12-31
+P004,Pedro Lima,111.444.777-35,11955554444,pedro.lima@email.com,guincho,São Paulo,2027-03-10
+P005,José Rocha,123.456.789-00,11944443333,jose.rocha@email.com,mecanico,São Paulo,2027-05-20
+P006,Marcos Dias,390.533.447-05,11933332222,marcos.dias@email.com,guincho,São Bernardo do Campo,2025-08-01
+P007,Luiza Prado,168.995.350-09,1198,luiza.prado,mecanico,Santo André,2027-09-09
+P008,Rafael Nunes,935.411.347-80,21999998888,rafael.nunes@email.com,guincho,Rio de Janeiro,2027-04-04

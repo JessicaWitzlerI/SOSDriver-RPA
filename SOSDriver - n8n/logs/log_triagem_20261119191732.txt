@@ -1,0 +1,9 @@
+2026-11-19T19:17:32.794Z | INFO | LOTE FINALIZADO | total=8 entregues_ao_mvp=3 revisao_manual=2 reprovados=3 falhas_integracao=0 lote_invalido=0
+2026-11-19T19:14:24.003Z | P001 | doc 112.***.***-81 | APROVADO_ENTREGUE | -
+2026-11-19T19:14:24.003Z | P002 | doc 529.***.***-25 | APROVADO_ENTREGUE | -
+2026-11-19T19:14:24.003Z | P003 | doc 111.***.***-35 | APROVADO_ENTREGUE | -
+2026-11-19T19:14:24.003Z | P004 | doc 111.***.***-35 | REPROVADO | Cadastro duplicado no lote
+2026-11-19T19:14:24.003Z | P005 | doc 123.***.***-00 | REPROVADO | Documento inválido
+2026-11-19T19:14:24.003Z | P006 | doc 390.***.***-05 | REPROVADO | Habilitação/licença vencida
+2026-11-19T19:14:24.003Z | P007 | doc 168.***.***-09 | REVISAO_MANUAL | E-mail inválido; Telefone inválido
+2026-11-19T19:14:24.003Z | P008 | doc 935.***.***-80 | REVISAO_MANUAL | Cidade fora da área de cobertura
